@@ -1,0 +1,90 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: reservations
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  gateway:
+    build: 
+      context: ./gateway
+    ports:
+      - "8000:8000"
+    environment:
+      - NODE_A_URL=http://node-a:8001
+      - NODE_B_URL=http://node-b:8002
+      - NODE_C_URL=http://node-c:8003
+    depends_on:
+      - node-a
+      - node-b
+
+  node-a:
+    build:
+      context: ./node_service
+    ports:
+      - "8001:8000"
+    environment:
+      - NODE_ID=node-a
+      - PORT=8000
+      - DB_URL=postgresql://admin:password@db:5432/reservations
+      - RABBITMQ_URL=rabbitmq
+      - OTHER_NODES=http://node-b:8000,http://node-c:8000
+    depends_on:
+      - db
+      - rabbitmq
+
+  node-b:
+    build:
+      context: ./node_service
+    ports:
+      - "8002:8000"
+    environment:
+      - NODE_ID=node-b
+      - PORT=8000
+      - DB_URL=postgresql://admin:password@db:5432/reservations
+      - RABBITMQ_URL=rabbitmq
+      - OTHER_NODES=http://node-a:8000,http://node-c:8000
+    depends_on:
+      - db
+      - rabbitmq
+
+  node-c:
+    build:
+      context: ./node_service
+    ports:
+      - "8003:8000"
+    environment:
+      - NODE_ID=node-c
+      - PORT=8000
+      - DB_URL=postgresql://admin:password@db:5432/reservations
+      - RABBITMQ_URL=rabbitmq
+      - OTHER_NODES=http://node-a:8000,http://node-b:8000
+    depends_on:
+      - db
+      - rabbitmq
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - VITE_API_URL=http://localhost:8000
+    depends_on:
+      - gateway
+
+volumes:
+  pgdata:
