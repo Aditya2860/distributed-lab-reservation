@@ -2,94 +2,80 @@
 
 This is a complete implementation of a fault-tolerant distributed system that coordinates shared resource reservations (laboratories, projectors, equipment) across multiple independent nodes.
 
-This project was built to satisfy both Formative Assessment 1 (FA-1) and Formative Assessment 2 (FA-2) requirements, demonstrating synchronous/asynchronous communication, logical event ordering, distributed mutual exclusion, and leader election.
+This project demonstrates core distributed systems concepts including synchronous/asynchronous communication, logical event ordering, distributed mutual exclusion, and leader election.
 
-## Architecture
+## Architecture & Features
 
-* **Frontend:** React + Vite SPA (Running on Port 3000)
-* **API Gateway:** FastAPI reverse proxy that routes traffic to backend nodes (Running on Port 8000)
-* **Node Services:** Three independent FastAPI instances (`node-a`, `node-b`, `node-c`) executing distributed algorithms.
-* **Database:** PostgreSQL for persisting reservations and resources.
-* **Message Broker:** RabbitMQ for asynchronous event propagation (e.g. `ReservationConfirmed` events).
+The system simulates a distributed college network where multiple servers handle reservation requests. It ensures that students cannot double-book a lab or piece of equipment by coordinating access using distributed algorithms.
+
+- **Frontend:** React + Vite SPA with modern white UI (Separated Admin & Student Portals)
+- **API Gateway:** FastAPI reverse proxy that acts as a load balancer, routing traffic randomly to available backend nodes (Running on Port 8000)
+- **Node Services:** Three independent FastAPI backend instances (`node-a`, `node-b`, `node-c`) executing the actual logic on ports 8001, 8002, and 8003.
+- **Database:** Shared local SQLite file representing distributed persistence layer.
+- **Message Broker:** Integration-ready with RabbitMQ for AMQP messaging (gracefully degrades to local mock queues if RabbitMQ is unavailable).
+
+For a deep dive into the system's architecture, including UML Class/Component and Sequence Diagrams, view the [`architecture_diagrams.md`](architecture_diagrams.md) file included in this repository.
 
 ## Distributed Algorithms Implemented
 1. **Lamport Logical Clocks:** Ensures events are causally ordered across the distributed nodes.
-2. **Lamport's Mutual Exclusion:** Prevents concurrent nodes from double-booking a resource by acquiring distributed locks through `REQUEST`, `REPLY`, and `RELEASE` broadcast messages.
-3. **Bully Leader Election:** Nodes have an ordered priority. If the coordinator crashes (simulated via Docker), the nodes detect the missing heartbeat and seamlessly elect a new leader.
+2. **Lamport's Mutual Exclusion:** Prevents concurrent nodes from double-booking a resource by acquiring distributed locks through `REQUEST`, `REPLY`, and `RELEASE` broadcast messages over the network.
+3. **Bully Leader Election:** Nodes have an ordered priority. If the coordinator crashes or starts up, the nodes automatically exchange priority packets and elect the highest-priority active node as the leader.
 
 ---
 
-## Prerequisites
+## Getting Started
 
 To run this project locally on Windows WITHOUT Docker, ensure you have:
-* **Python 3.10+** (Added to PATH)
-* **Node.js & npm** (Added to PATH)
+* **Python 3.10+**
+* **Node.js & npm**
 
----
-
-## Step-by-Step Instructions to Run the Project
-
-### 1. Initial Setup
-Open your terminal (PowerShell) and navigate to the project root:
-```powershell
-cd "C:\Users\Aditya\OneDrive\Desktop\Personal Project\DS Project\distributed-lab-reservation"
-```
-Install the Python and Node dependencies:
-```powershell
+### 1. Install Dependencies
+Open your terminal and navigate to the project root:
+```bash
+# Install backend requirements
 pip install -r node_service/requirements.txt
 pip install -r gateway/requirements.txt
+
+# Install frontend requirements
 cd frontend
 npm install
 cd ..
 ```
 
-### 2. Start the Distributed Cluster
-We have provided a native PowerShell script that starts the API Gateway, all 3 backend nodes, and the React frontend simultaneously:
-```powershell
-.\scripts\start_all.ps1
-```
-*(If your execution policy blocks scripts, you can run `python start_local.py` instead).*
-
-### 3. Open the Dashboard
-Open your web browser and go to:
-**http://localhost:3000**
-
-### 4. Stop the Services
-When you're done, run the stop script to cleanly kill all background processes:
-```powershell
-.\scripts\stop_all.ps1
+### 2. Seed the Database
+Generate the dummy data, test resources, and user accounts:
+```bash
+python seed_data.py
+# Note: Ensure the generated `reservations.db` is located inside `node_service/app/`.
 ```
 
-### Step 2: Start the Cluster Locally
-Run the local orchestration script that launches the 3 Nodes, the API Gateway, and the React frontend simultaneously:
+### 3. Start the Cluster
+Run the orchestration script to launch all 3 Nodes, the API Gateway, and the React frontend simultaneously:
 ```bash
 python start_local.py
 ```
-*(This script bypasses Docker and runs everything natively using SQLite instead of PostgreSQL).*
 
-### Step 3: Access the Frontend Dashboard
-Once the services are running, open your web browser and navigate to:
-👉 **[http://localhost:3000](http://localhost:3000)**
-
-You will see the **Distributed Lab Reservation System** dashboard.
+### 4. Access the Application
+Once the terminal reads *All services started!*, open your web browser and navigate to:
+👉 **http://localhost:3000**
 
 ---
 
-## Testing the Distributed Features (Demonstration Guide)
+## Demo Accounts
 
-### 1. Test Reservation (Mutual Exclusion & Logical Clocks)
-1. In the web UI, click **"Request Reservation"**.
-2. The UI will send the request to the Gateway, which forwards it to a random Node.
-3. Behind the scenes, the receiving Node executes **Lamport's Mutual Exclusion** algorithm, exchanging `REQUEST` and `REPLY` messages with the other local nodes on ports `8001`, `8002`, `8003`.
-4. Once the lock is acquired, it writes to the local SQLite database, broadcasts a `RELEASE`, and increments the logical clock.
-5. You will see a success message with the incremented **Logical Time**, and the cluster table's logical times will sync up.
+You can log in and test the application using the following seeded credentials.
 
-### 2. Test Fault Tolerance (Bully Leader Election)
-1. Look at the Cluster Status table on the frontend and identify the current **Coordinator**.
-2. You can simulate a node crash by pressing `Ctrl + C` in the terminal to kill the script, then edit `start_local.py` to comment out one of the nodes and restart it. Or simply let the nodes run, they will elect a leader automatically based on who is available!
+**Admin Portal:**
+* Email: `admin@labreserve.test`
+* Password: `Demo@12345`
+
+**Student Portal (Mock Users):**
+* Email: `aarav.sharma@labreserve.test`
+* Email: `priya.patil@labreserve.test`
+* Email: `rohan.deshmukh@labreserve.test`
+* Password for all students: `Demo@12345`
 
 ---
 
 ## Stopping the Application
-
 To shut down the cluster and clean up the running processes, simply press `Ctrl + C` in the terminal where `start_local.py` is running.
