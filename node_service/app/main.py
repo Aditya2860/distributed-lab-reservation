@@ -9,7 +9,10 @@ from algorithms.mutual_exclusion import mutex
 from algorithms.leader_election import election
 from messaging.publisher import publish_event
 
-models.Base.metadata.create_all(bind=engine)
+try:
+    models.Base.metadata.create_all(bind=engine)
+except Exception:
+    pass
 
 app = FastAPI()
 
