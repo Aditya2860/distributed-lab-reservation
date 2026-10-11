@@ -18,12 +18,15 @@ except:
 OTHER_NODES_STR = os.getenv("OTHER_NODES", "")
 OTHER_NODES = [n for n in OTHER_NODES_STR.split(",") if n] if OTHER_NODES_STR else []
 
-# Map other node URLs to their priorities by letter in their URL
+# Map other node URLs to their priorities by port or node name in their URL
 def _url_priority(url):
-    """Infer priority from node URL (e.g. 8003 -> 'c', priority 67)"""
-    port_map = {"8001": ord("A"), "8002": ord("B"), "8003": ord("C")}
-    for port, pri in port_map.items():
-        if port in url:
+    """Infer priority from node URL (e.g. 8003 or node-c -> priority 67)"""
+    key_map = {
+        "8001": ord("A"), "8002": ord("B"), "8003": ord("C"),
+        "node-a": ord("A"), "node-b": ord("B"), "node-c": ord("C")
+    }
+    for key, pri in key_map.items():
+        if key in url.lower():
             return pri
     return 0
 
