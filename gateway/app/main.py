@@ -1,8 +1,11 @@
 import os
 import random
 import requests
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from jose import JWTError, jwt
+from datetime import datetime, timedelta
 
 app = FastAPI()
 
@@ -24,38 +27,38 @@ if not NODES:
 def get_random_node():
     return random.choice(NODES)
 
-from fastapi import FastAPI, HTTPException, Depends, status
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from jose import JWTError, jwt
-from datetime import datetime, timedelta
-
-# Mock SECRET_KEY for dev
+# Auth config
 SECRET_KEY = "super-secret-key-for-dev"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
+
 @app.post("/token")
 def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
-    # We will forward this to one of the nodes to check DB
     node = get_random_node()
     try:
-        response = requests.post(f"{node}/internal/auth/login", json={"email": form_data.username, "password": form_data.password}, timeout=5)
+        response = requests.post(
+            f"{node}/internal/auth/login",
+            json={"email": form_data.username, "password": form_data.password},
+            timeout=5
+        )
         if response.status_code != 200:
             raise HTTPException(status_code=400, detail="Incorrect email or password")
-        
+
         user = response.json()
-        access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-        
         to_encode = {"sub": user["email"], "role": user["role"], "id": user["id"], "name": user["name"]}
-        expire = datetime.utcnow() + access_token_expires
+        expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
         to_encode.update({"exp": expire})
         encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-        
+
         return {"access_token": encoded_jwt, "token_type": "bearer", "user": user}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Error authenticating: {str(e)}")
+
 
 def get_current_user(token: str = Depends(oauth2_scheme)):
     credentials_exception = HTTPException(
@@ -66,12 +69,14 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         email: str = payload.get("sub")
-        role: str = payload.get("role")
         if email is None:
             raise credentials_exception
         return payload
     except JWTError:
         raise credentials_exception
+
+
+# ─── Resources ────────────────────────────────────────────────────────────────
 
 @app.get("/resources")
 def get_resources(current_user: dict = Depends(get_current_user)):
@@ -83,24 +88,53 @@ def get_resources(current_user: dict = Depends(get_current_user)):
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Error communicating with node: {str(e)}")
 
+
+@app.post("/resources")
+def create_resource(payload: dict, current_user: dict = Depends(get_current_user)):
+    """Admin only: create a new resource across all nodes."""
+    if current_user.get("role") != "ADMIN":
+        raise HTTPException(status_code=403, detail="Only admins can create resources")
+    node = get_random_node()
+    try:
+        response = requests.post(f"{node}/internal/resources", json=payload, timeout=5)
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Error communicating with node: {str(e)}")
+
+
+@app.delete("/resources/{resource_id}")
+def delete_resource(resource_id: str, current_user: dict = Depends(get_current_user)):
+    """Admin only: deactivate a resource."""
+    if current_user.get("role") != "ADMIN":
+        raise HTTPException(status_code=403, detail="Only admins can delete resources")
+    node = get_random_node()
+    try:
+        response = requests.delete(f"{node}/internal/resources/{resource_id}", timeout=5)
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Error communicating with node: {str(e)}")
+
+
+# ─── Reservations ─────────────────────────────────────────────────────────────
+
 @app.post("/reservations")
 def create_reservation(payload: dict, current_user: dict = Depends(get_current_user)):
-    """Forward reservation to a node. Tries each node once in random order."""
-    
-    # Override student_id with authenticated user's ID
+    """Forward reservation request. Tries each node once in random order (distributed mutex)."""
+    # Always bind to the authenticated student's ID
     if current_user["role"] == "STUDENT":
         payload["student_id"] = current_user["id"]
-    
+
     nodes = NODES.copy()
     random.shuffle(nodes)
     last_error = "No nodes available"
     for node in nodes:
         try:
-            # 30s timeout: node must acquire Lamport mutex (up to 10s) + DB write
             response = requests.post(
                 f"{node}/internal/reservation-request",
                 json=payload,
-                timeout=30
+                timeout=30  # mutex acquire can take up to ~10s
             )
             if response.status_code == 200:
                 return response.json()
@@ -109,6 +143,7 @@ def create_reservation(payload: dict, current_user: dict = Depends(get_current_u
             last_error = str(e)
             continue
     raise HTTPException(status_code=503, detail=f"All nodes failed. Last error: {last_error}")
+
 
 @app.get("/reservations")
 def get_reservations(current_user: dict = Depends(get_current_user)):
@@ -123,6 +158,7 @@ def get_reservations(current_user: dict = Depends(get_current_user)):
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Error communicating with node: {str(e)}")
 
+
 @app.delete("/reservations/{res_id}")
 def cancel_reservation(res_id: str, current_user: dict = Depends(get_current_user)):
     node = get_random_node()
@@ -132,6 +168,9 @@ def cancel_reservation(res_id: str, current_user: dict = Depends(get_current_use
         return response.json()
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Error communicating with node: {str(e)}")
+
+
+# ─── Users ────────────────────────────────────────────────────────────────────
 
 @app.get("/users")
 def get_users(current_user: dict = Depends(get_current_user)):
@@ -145,9 +184,13 @@ def get_users(current_user: dict = Depends(get_current_user)):
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Error communicating with node: {str(e)}")
 
+
+# ─── Cluster ──────────────────────────────────────────────────────────────────
+
 @app.get("/cluster/nodes")
 def get_cluster_nodes():
     return {"nodes": NODES}
+
 
 @app.get("/cluster/info")
 def get_cluster_info():
@@ -161,9 +204,10 @@ def get_cluster_info():
                 info.append(data)
             else:
                 info.append({"node_id": node, "node_url": node, "status": "down"})
-        except:
+        except Exception:
             info.append({"node_id": node, "node_url": node, "status": "down"})
     return {"cluster": info}
+
 
 @app.get("/cluster/leader")
 def get_cluster_leader():
@@ -174,6 +218,6 @@ def get_cluster_leader():
                 data = res.json()
                 if data.get("is_coordinator"):
                     return {"leader": data}
-        except:
+        except Exception:
             pass
     return {"leader": None}

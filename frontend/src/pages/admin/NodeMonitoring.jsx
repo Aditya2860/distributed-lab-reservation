@@ -1,75 +1,123 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { fetchWithAuth } from '../../api/client';
-import { Server, Activity, Clock } from 'lucide-react';
+
+const RefreshIcon = () => (
+  <svg fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" style={{width:15,height:15}}><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
+);
 
 const NodeMonitoring = () => {
   const [nodes, setNodes] = useState([]);
-  const [leader, setLeader] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [lastUpdated, setLastUpdated] = useState(null);
 
-  const fetchNodes = async () => {
+  const fetchNodes = useCallback(async () => {
     try {
       const info = await fetchWithAuth('/cluster/info');
       setNodes(info.cluster || []);
-      
-      const leaderInfo = info.cluster.find(n => n.is_coordinator);
-      if (leaderInfo) {
-        setLeader(leaderInfo);
-      } else {
-        setLeader(null);
-      }
+      setLastUpdated(new Date());
     } catch (err) {
-      console.error("Failed to fetch node info", err);
+      console.error('Failed to fetch node info', err);
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     fetchNodes();
     const interval = setInterval(fetchNodes, 3000);
     return () => clearInterval(interval);
-  }, []);
+  }, [fetchNodes]);
 
-  if (loading) return <div>Loading cluster info...</div>;
+  const onlineCount = nodes.filter(n => n.status !== 'down').length;
+  const leader = nodes.find(n => n.is_coordinator);
 
   return (
     <div>
       <div className="page-header">
-        <h1 className="page-title">Distributed System Node Monitoring</h1>
-        <p className="page-subtitle">Real-time status of backend nodes and leader election.</p>
+        <div className="page-header-text">
+          <h1 className="page-title">Node Monitoring</h1>
+          <p className="page-subtitle">
+            Real-time distributed system status — auto-refreshes every 3s.
+            {lastUpdated && <span style={{ marginLeft: 8, color: 'var(--text-muted)', fontSize: 12 }}>Last updated: {lastUpdated.toLocaleTimeString()}</span>}
+          </p>
+        </div>
+        <button className="btn btn-secondary" onClick={fetchNodes}>
+          <RefreshIcon /> Refresh
+        </button>
       </div>
 
-      <div className="dashboard-grid">
-        {nodes.map(node => (
-          <div key={node.node_url} className="metric-card" style={{border: node.is_coordinator ? '2px solid var(--primary)' : '1px solid var(--border)'}}>
-            <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px'}}>
-              <div style={{fontWeight: 'bold', fontSize: '18px', display: 'flex', alignItems: 'center', gap: '8px'}}>
-                <Server size={20} color={node.status === 'down' ? 'var(--danger)' : 'var(--primary)'} />
-                {node.node_id}
-              </div>
-              <span className={`badge badge-${node.status === 'down' ? 'danger' : 'success'}`}>
-                {node.status === 'down' ? 'Offline' : 'Online'}
-              </span>
-            </div>
-            
-            <div style={{color: 'var(--text-secondary)', marginBottom: '12px', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px'}}>
-              <Activity size={16} /> URL: {node.node_url}
-            </div>
-            
-            {node.status !== 'down' && (
-              <div style={{color: 'var(--text-secondary)', marginBottom: '12px', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px'}}>
-                <Clock size={16} /> Lamport Time: {node.logical_time}
-              </div>
-            )}
-            
-            {node.is_coordinator && (
-              <div style={{marginTop: '16px', padding: '8px', backgroundColor: 'var(--primary-subtle)', borderRadius: 'var(--radius-sm)', color: 'var(--primary)', fontWeight: 'bold', textAlign: 'center', fontSize: '12px', textTransform: 'uppercase'}}>
-                ★ Current Coordinator
-              </div>
-            )}
+      {/* Summary row */}
+      <div className="dashboard-grid" style={{ marginBottom: 24 }}>
+        <div className="metric-card">
+          <div className="metric-title">Total Nodes</div>
+          <div className="metric-value">{nodes.length}</div>
+        </div>
+        <div className="metric-card">
+          <div className="metric-title">Online</div>
+          <div className="metric-value" style={{ color: 'var(--success)' }}>{onlineCount}</div>
+        </div>
+        <div className="metric-card">
+          <div className="metric-title">Offline</div>
+          <div className="metric-value" style={{ color: nodes.length - onlineCount > 0 ? 'var(--danger)' : 'var(--text-muted)' }}>
+            {nodes.length - onlineCount}
           </div>
-        ))}
+        </div>
+        <div className="metric-card">
+          <div className="metric-title">Coordinator</div>
+          <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--primary)', marginTop: 6, fontFamily: 'monospace' }}>
+            {leader ? leader.node_id : '—'}
+          </div>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="loading-container"><div className="spinner" /> Loading cluster info...</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {nodes.map(node => {
+            const isOnline = node.status !== 'down';
+            const isLeader = node.is_coordinator;
+            return (
+              <div key={node.node_url} className={`node-card${isLeader ? ' leader' : ''}`}>
+                <div className={`node-status-dot ${isOnline ? 'up' : 'down'}`} />
+                <div className="node-info">
+                  <div className="node-id">{node.node_id}</div>
+                  <div className="node-meta">{node.node_url}</div>
+                </div>
+                <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+                  {isOnline && (
+                    <>
+                      <div style={{ textAlign: 'center' }}>
+                        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 2 }}>Lamport Time</div>
+                        <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--primary)', fontFamily: 'monospace' }}>
+                          {node.logical_time ?? '—'}
+                        </div>
+                      </div>
+                      {node.coordinator_id && (
+                        <div style={{ textAlign: 'center' }}>
+                          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 2 }}>Sees Coordinator</div>
+                          <div style={{ fontSize: 12, fontFamily: 'monospace', color: 'var(--text-secondary)' }}>
+                            {node.coordinator_id}
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    {isLeader && <span className="badge badge-primary">★ Coordinator</span>}
+                    <span className={`badge badge-${isOnline ? 'success' : 'danger'}`}>
+                      {isOnline ? 'Online' : 'Offline'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <div className="alert alert-info" style={{ marginTop: 24 }}>
+        🔧 Leader election uses the <strong>Bully Algorithm</strong>. If the coordinator goes down, the highest-ID online node automatically takes over.
       </div>
     </div>
   );
