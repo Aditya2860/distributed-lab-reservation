@@ -18,8 +18,14 @@ For a deep dive into the system's architecture, including UML Class/Component an
 
 ## Distributed Algorithms Implemented
 1. **Lamport Logical Clocks:** Ensures events are causally ordered across the distributed nodes.
-2. **Lamport's Mutual Exclusion:** Prevents concurrent nodes from double-booking a resource by acquiring distributed locks through `REQUEST`, `REPLY`, and `RELEASE` broadcast messages over the network.
+2. **Lamport's Mutual Exclusion:** Coordinates concurrent reservation requests through `REQUEST`, `REPLY`, and `RELEASE` messages. Each request carries a Lamport logical timestamp; the request with the lower timestamp is ordered first, with node ID breaking ties. After entering the critical section, the node checks for an overlapping confirmed reservation before saving.
 3. **Bully Leader Election:** Nodes have an ordered priority. If the coordinator crashes or starts up, the nodes automatically exchange priority packets and elect the highest-priority active node as the leader.
+
+### Simultaneous reservation requests
+
+If two students request the same resource and time slot concurrently, Lamport timestamps and node IDs determine the request order. The first request to complete the reservation check and save is confirmed; the later request sees the overlapping reservation and is rejected. A Lamport timestamp is a logical ordering counter, not a wall-clock time or a measure of elapsed seconds.
+
+The current mutex implementation has a 10-second wait timeout and can enter the critical section with incomplete replies. If a node is unreachable, this fallback means distributed mutual exclusion is not guaranteed, so concurrent requests could still race; the database overlap check is an additional safeguard, not a replacement for reliable coordination.
 
 ---
 
