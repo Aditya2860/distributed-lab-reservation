@@ -1,7 +1,6 @@
 import sys
 import os
 import datetime
-from passlib.context import CryptContext
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "node_service", "app"))
 
@@ -54,17 +53,23 @@ try:
             db.add(models.Resource(**r, active=True))
             added_res += 1
             
-    # Add dummy reservations
+    # Add dummy reservations (idempotent: skip if request_id already exists)
     import uuid
-    import datetime
-    now = datetime.datetime.utcnow()
+    import time as _time
+    run_ts = int(_time.time())  # unique per run to avoid UNIQUE constraint
+    now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
     added_reserv = 0
     for i in range(15):
+        req_id = f"req-seed-{run_ts}-{i}"
+        existing_res = db.query(models.Reservation).filter_by(request_id=req_id).first()
+        if existing_res:
+            continue
+
         student_id = f"user-{(i % 5) + 1}"
         resource_id = RESOURCES[i % len(RESOURCES)]["id"]
-        start = now + datetime.timedelta(days=i%3, hours=i)
+        start = now + datetime.timedelta(days=i % 3, hours=i)
         end = start + datetime.timedelta(hours=1)
-        
+
         res_id = str(uuid.uuid4())
         new_res = models.Reservation(
             id=res_id,
@@ -73,13 +78,13 @@ try:
             start_time=start,
             end_time=end,
             status="confirmed",
-            request_id=f"req-{i}",
+            request_id=req_id,
             created_by_node="node-1",
             logical_timestamp=i
         )
         db.add(new_res)
         added_reserv += 1
-            
+
     db.commit()
     print(f"[OK] Seeded {added_users} users, {added_res} resources, and {added_reserv} reservations.")
 finally:
